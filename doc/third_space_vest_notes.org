@@ -1,0 +1,218 @@
+* Notes
+Hardware
+VID: 0x1BD7
+PID: 0x5000
+
+10 bytes out sets status return, which is same until next output.
+
+Length 10, cell 1
+02 1D 52 29 1E 9E DC 05 D5 E4
+
+Length 10, cell 2
+02 ED 41 74 B7 83 85 45 E6 8A
+
+Length 10, cell 3
+02 ED 41 74 B7 83 85 45 E6 8A
+
+"Acceleration"
+02 89 A1 40 E8 4A 9B 99 7A 64
+
+- {0x0, 0x28059900}
+- {0x57623340, 0x5E791611}
+
+
+{0x4F8FFA50, 0x729E1E84}
+
+02 89 42 0B 1D 2D 12 F2 B9 C9
+
+
+Input:  02 38 30 31 32 33 34 5A 04 02
+Always starts with 02 38
+Only seen last 3 bytes change
+Bytes 7-9 change when actuating?
+Byte 7 may be air level?
+Byte 8-9 might be event signalling (silent/playing?)
+
+
+02 5C A3 62 DD 62 DB 40 2F 85
+Output: 02 42 18 6E 7A 2B FC F1 53 07
+Always starts with 02 42
+Last 8 bytes probably per actuator
+
+
+Relevant functions:
+
+Algorithm used is TEA
+
+Possible Cache Key?
+Acceleration
+
+Packing? 0x28059900
+05 - Cell?
+28 - Inflation level? Length to inflation?
+99 - Inflation level?
+
+{0x0, 0x28059900} - 64-bit block
+{0x142A7856, 0x083D1951, 0x15506454, 0x463E461D} - 128-bit cache key
+{0xE3E8572E, 0x271F21A7} - Output
+
+
+KEY INDEX - 0xD5
+CACHE KEY - {0x35491600, 0x39047C32, 0x0E354D4B, 0x70252576}
+
+Keystore at 0x4168FA?
+
+
+
+void _cdecl encrypt(unsigned long* a, unsigned long* b)
+void _cdecl decrypt(unsigned long* a, unsigned long* b)
+
+Encrypt takes 2 uint32_t's in a, encrypts them using 2 uint32_t's in b, stores encrypted values back into a.
+Decrypt takes 2 uint32_t's in a, decrypts them using 2 uint32_t's in b, stores encrypted values back into a.
+
+values for b are most likely only 1 bytes, and are most likely what is transferred in the first type bytes of the packets
+
+Locations
+0x411510 main
+0x411D30 encrypt
+0x411DE0 decrypt
+
+
+Speed, Cell (SetEffect2 arguments)
+01, 01 - {0x0, 0x01054600}
+02, 01 - {0x0, 0x02054F00}
+03, 01 - {0x0, 0x03054800}
+01, 02 - {0x0, 0x01022D00}
+01, 03 - {0x0, 0x01045300}
+01, 04 - {0x0, 0x01033800}
+01, 05 - {0x0, 0x01067900}
+01, 06 - {0x0, 0x01011200}
+01, 07 - {0x0, 0x01076C00}
+01, 08 - {0x0, 0x01000700}
+
+
+Packet Format:
+
+Byte 0: Length
+Byte 1: Index (1 = 5, 2 = 2, 3 = 4, 4 = 3, 5 = 6, 6 = 1, 7 = 7, 8 = 0}
+Byte 2: CRC8
+Packets
+
+Acceleration - {0x0, 0x28059900}
+Decceleration - {0x0, 0x2802F200}
+Turn Left - (0x0, 0x00022A00} 
+Turn Right - {0x0, 0x28048C00}
+Turn Right Stop? - {0x0, 0x2806A600}
+Cleanup - {0x0, 0x00076B00}
+
+
+Crypto Block
+
+CPU Stack
+Address   Value      
+004168FA   3D412E15  
+004168FE   02176D0B  
+00416902   3E12245F  
+00416906   1C2E5F6F  
+0041690A   08276B57  
+0041690E   2E7A5271  
+00416912   7B62625B  
+00416916   195B2670  
+0041691A   76216B4C  
+0041691E   3E313C4C  
+00416922   5B46640A  
+00416926   7B5C7264  
+0041692A   092F2F75  
+0041692E   313C291A  
+00416932   603E2B6E  
+00416936   4131414D  
+0041693A   40513753  
+0041693E   091B1A5C  
+00416942   09493505  
+00416946   6A5A1429  
+0041694A   1A070364  
+0041694E   454E0F13  
+00416952   55690351  
+00416956   78566B7A  
+0041695A   1951142A  
+0041695E   6454083D  
+00416962   461D1550  
+00416966   6A27463E  
+0041696A   3C2F6823  
+0041696E   682F055C  
+00416972   5B656B03  
+00416976   3F4C2676  
+0041697A   03210051  
+0041697E   505E076E  
+00416982   1341066B  
+00416986   79450923  
+0041698A   6D275C32  
+0041698E   1B610C75  
+00416992   70316406  
+00416996   17127043  
+0041699A   7C417C48  
+0041699E   4B38156F  
+004169A2   71350656  
+004169A6   19335B58  
+004169AA   2F6F6111  
+004169AE   5F63225D  
+004169B2   154D6C59  
+004169B6   7E284A60  
+004169BA   0530090E  
+004169BE   57623340  
+004169C2   5E791611  
+004169C6   48713D5D  
+004169CA   00067540  
+004169CE   32354916  
+004169D2   4B39047C  
+004169D6   760E354D  
+004169DA   1F702525  
+004169DE   725C6261  
+004169E2   5B0D371B  
+004169E6   077F3031  
+004169EA   616E193F  
+004169EE   16577F1F  
+004169F2   10752D6F  
+004169F6   7D442F0A  
+004169FA   4800510C  
+004169FE   1D262052  
+00416A02   69716776  
+00416A06   575D3256  
+00416A0A   53264E0E  
+00416A0E   09494578  
+00416A12   66016532  
+00416A16   144A3917  
+00416A1A   01600E43  
+00416A1E   59406F13  
+00416A22   06252721  
+00416A26   360B454B  
+00416A2A   542E122C  
+00416A2E   0C0B1C21  
+00416A32   4B5D2E45  
+00416A36   3C205474  
+00416A3A   4B105A4A  
+00416A3E   242A4D23  
+00416A42   3428781C  
+00416A46   25096710  
+00416A4A   6506661B  
+00416A4E   201D021A  
+00416A52   40080628  
+00416A56   73457E21  
+00416A5A   24103721  
+00416A5E   7F633B04  
+00416A62   07005867  
+00416A66   1B1C090E  
+00416A6A   3F381512  
+00416A6E   23243136  
+00416A72   45442D2A  
+00416A76   50595243  
+00416A7A   474E4954  
+00416A7E   4E45000A  
+00416A82   50595243  
+00416A86   474E4954  
+
+| Cell Index | Speed | Packet                        |
+|------------+-------+-------------------------------|
+|          1 |     9 | ...                           |
+|          1 |    10 | 02 1D 52 29 1E 9E DC 05 D5 E4 |
+|          2 |     1 | ...                           |

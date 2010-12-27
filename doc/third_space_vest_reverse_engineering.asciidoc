@@ -1,0 +1,1216 @@
+= Third Space Vest Reverse Engineering
+Kyle Machulis <kyle@nonpolynomial.com>
+Version 1.0, 2010-12-26
+
+== Abstract
+
+Author:
+Kyle Machulis (qDot)
+http://www.nonpolynomial.com
+
+The story of how the Third Space Vest was reverse engineered, with the
+goal of developing a cross-platform python based proof-of-concept
+driver using the knowledge gotten from multiple sources, including usb
+line analysis and SDK disassembly. Those who want a more consise
+overview of the protocol should see the protocol document included
+with the source code.
+
+The information is presented in a linear fashion, with emphasis on
+only using tools when they become required, in order to demostrate
+what can be done with most of the tools before needing others (read: I
+could've done all of this in IDA Pro but I'm trying to be educational
+here. :) ).
+
+== Introduction
+
+There's a few things I wanted to do when I started using computers in the
+late 80's/early 90's:
+
+- Write door games
+- Write demos
+- Write cracks
+
+The first one, well, I've worked in games/virtual worlds now, but I
+dunno if conquered what I was looking for in terms of text based
+games. Demos, I need to move to northern europe first, I think.
+
+However, now I can say I've finally cracked something that even
+required crypto work. It's small, silly, not very well known hardware,
+but for some reason the engineers behind it saw fit to encrypt the
+protocol to talk to it, and I've now undone that. Usually when I work
+with hardware, it's just a matter of staring at the protocol until I
+see it, but this actually took disassembly work, as well as other EULA
+breaking goodness.
+
+The code for this is _so_ going on my fridge with a gold star on it.
+
+== Hardware Overview
+
+The Third Space Vest from TN Games is a piece of haptic feedback
+hardware, made for gamers that want to feel like they're being shot
+while playing games. The device comes as a sort of flak jacket, with 4
+air bladders in each quadrant of the front and back. There is also a
+USB and air flow control box that is quite literally sewn into the
+vest. This is where you plug in the pump and USB communication to
+the PC.
+
+The pump is self refilling, and the VERY VERY LOUD. Absolutely
+unusably so for any sort of immersive gaming unless you're planning on
+deafening yourself via headphones to mask the sound of refilling. But,
+we'll just ignore that for now, even though it makes the hardware
+testing phase annoying as hell.
+
+== Information Gathering
+
+It's good to put together information about what's happening with the
+device during normal usage and through benign means before starting to
+really look at the protocol. This involves reading the descriptors,
+any SDK manuals, and looking at the USB line protocol.
+
+=== USB Descriptor
+
+Here's the USB descriptor dump we get from the device, by running
+lsusb -vvv on a linux box with the device connected:
+
+-----
+Bus 003 Device 009: ID 1bd7:5000  
+Device Descriptor:
+  bLength                18
+  bDescriptorType         1
+  bcdUSB               1.10
+  bDeviceClass            0 (Defined at Interface level)
+  bDeviceSubClass         0 
+  bDeviceProtocol         0 
+  bMaxPacketSize0         8
+  idVendor           0x1bd7 
+  idProduct          0x5000 
+  bcdDevice            0.01
+  iManufacturer           1 
+  iProduct                2 
+  iSerial                 0 
+  bNumConfigurations      1
+  Configuration Descriptor:
+    bLength                 9
+    bDescriptorType         2
+    wTotalLength           41
+    bNumInterfaces          1
+    bConfigurationValue     1
+    iConfiguration          0 
+    bmAttributes         0x80
+      (Bus Powered)
+    MaxPower              500mA
+    Interface Descriptor:
+      bLength                 9
+      bDescriptorType         4
+      bInterfaceNumber        0
+      bAlternateSetting       0
+      bNumEndpoints           2
+      bInterfaceClass         3 Human Interface Device
+      bInterfaceSubClass      0 No Subclass
+      bInterfaceProtocol      0 None
+      iInterface              0 
+        HID Device Descriptor:
+          bLength                 9
+          bDescriptorType        33
+          bcdHID               1.10
+          bCountryCode            0 Not supported
+          bNumDescriptors         1
+          bDescriptorType        34 Report
+          wDescriptorLength      25
+         Report Descriptors: 
+           ** UNAVAILABLE **
+      Endpoint Descriptor:
+        bLength                 7
+        bDescriptorType         5
+        bEndpointAddress     0x01  EP 1 OUT
+        bmAttributes            3
+          Transfer Type            Interrupt
+          Synch Type               None
+          Usage Type               Data
+        wMaxPacketSize     0x0040  1x 64 bytes
+        bInterval              10
+      Endpoint Descriptor:
+        bLength                 7
+        bDescriptorType         5
+        bEndpointAddress     0x82  EP 2 IN
+        bmAttributes            3
+          Transfer Type            Interrupt
+          Synch Type               None
+          Usage Type               Data
+        wMaxPacketSize     0x0040  1x 64 bytes
+        bInterval              10
+-----
+
+From this, we know the VID/PID of the device, and that it's using the
+USB HID protocol, though it's assumed that this is probably some
+bastardization of format. Making hardware that talks HID on windows
+means the user does not have to install drivers. Many manufacturers
+exploit this fact, sending non-standard messages over HID in order to
+have plug-and-play like capabilities on windows. It also means that
+you have to blacklist on linux and install a shunt kext on OS X. Good
+times.
+
+Other than that, we can see that the endpoints can deal with 64 byte
+interrupt packets. But, since we haven't started looking at the line
+yet, we don't know exactly what size we'll be expecting. That's about
+all we can pull from this right now.
+
+=== From the SDK
+
+From downloading and reading the SDK, we get a few pieces of
+information:
+
+- There's "SetEffect" and "SetEffect2" functions. SetEffect takes in
+  prebuilt effects that come with the SDK, SetEffect2 just takes the
+  index of an aircell in the vest, and the speed at which to
+  inflate it. This means that SetEffect2 will probably be our main
+  attack strategy. It all encompasses all the vest does: setting an
+  air cell to a value.
+- The vest has "setup" and "teardown" functions, meaning there may be
+  some sort of initialization.
+- There's a "FlushBuffer" function, meaning either the hardware could
+  queue commands, or it could be done in the software.
+
+This gives us a few entry points to look at when we delve farther into
+SDK implemenation later.
+
+=== From the USB Line
+
+This is where things get interesting.
+
+After compiling the example that comes with the SDK, we can set USB
+analyzer software on top of the OS the vest is connected to, and watch
+packets as they come through the filter driver. This can be done using
+any analyzer:
+
+- SniffUSB
+- USBlyzer
+- VMWare's USB Monitor (if this is being done via a VMWare VM)
+
+Basically, whatever will allow us to see what's going back and forth
+over the line.
+
+Here's the source code I used to generate the packets:
+
+-----
+
+#include "tngaming.h"
+
+/* --- link library */
+#pragma comment(lib,"tngaming.lib")
+
+#define THREE_SECONDS (3000)
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+	/* Initailized gaming library */
+	printf("Setting Up\n");
+	if (SetUpJacket()  != GLIB_OK)
+	{
+		printf("Error: %s", GetErrorText());
+	}
+	
+	printf("Custom Effect - length = 10, Cell = 1\n");
+	if (SetEffect2(10,1) != GLIB_OK)
+	{
+			printf("Error: %s", GetErrorText());
+	}
+
+	::Sleep(3000);
+	printf("Cleaning Up\n");
+	TearDownJacket();
+
+	return 0;
+}
+-----
+
+From simple packet analysis, we see:
+
+- Both input and output are 10 bytes.
+- Output is sent as one 10 byte packet. Input is polled constantly by
+  the operating system since this is an HID device.
+- On initial connection to the machine, the device will send all 0
+  values when polled by the OS, until a command is sent. Then it will
+  always return the status of the last command sent.
+
+Output packets look like (generated via SetEffect2(10, 1), to fire air
+cell 1 with 'speed' 10):
+
+-----
+02 1D 52 29 1E 9E DC 05 D5 E4
+-----
+
+Input packets look like (return status from above command):
+
+-----
+02 38 30 31 32 33 34 5A 04 02
+-----
+
+Not a whole hell of a lot that we can obviously extract there. It's
+weird that we need 10 bytes to talk to the device though. Every packet
+starts with 0x2.
+
+Changing up the example to run SetEffect2(10,1) in a loop, we
+get the following packets sent to the vest:
+
+-----
+...
+02 D8 B6 FF F9 87 F1 17 37 64
+02 9F 3A D0 98 00 C4 49 CB 96
+02 1F ED 8E 1D E3 90 0C 93 BA
+02 FF 8A 52 2F E0 EF B5 92 8A
+02 BA F5 02 AC 90 E3 80 45 E6
+02 90 F5 40 78 56 64 EB A5 5A
+02 BB F8 FF 8E B4 A2 69 84 45
+02 D4 03 DF 0E 0C 30 4B D6 28
+...
+-----
+
+The last 9 bytes change in a non-uniform way on every input, even
+though we're sending the same command over and over. That means the
+packet protocol is somehow obfuscated or encrypted. Most likely
+encrypted.
+
+Damnit.
+
+== Wait, why is it obfuscated?
+
+That's a really good question. It's for games, after all. It's not
+like it's accessing your bank account.
+
+TN Games hands their SDK out in a "free as in beer" format, meaning
+you can download the SDK for free for windows (it's a single header
+and a static library). However, that's only for non-commercial
+development. For actually using it within a game, you have to contact
+TN Games and work out licensing fees, since they see their vest as a
+value-add to your game, so you get to pay them for the right to
+use it.
+
+So, yeah, you pay $99-139 for their vest, then they also charge
+companies to develop games for the vest. That way, they can make their
+money two ways, even though those two ways depend on each other. For
+game manufacturers to want to buy the vest, gamers need to have it and
+demand support. For gamers to want it, game manufacturers need to put
+it in their games. This is a very common model for non-necessary game
+hardware, be it haptic, biometric, whatever.
+
+Via the licensing agreement, TN Games is legally guarenteed to get
+their cash, since otherwise they can sue makers of commercial games if
+a game producer doesn't pay up and _uses their SDK_. That last part is
+important.
+
+In the USA, reverse engineering a protocol falls under fair use, as
+long as you don't have to disassemble the code to access the
+device. Since the consumer bought the device, and owns the line
+between the device and the computer, they can watch/log whatever comes
+over that line. This means that, without an obfuscated/encrypted
+protocol, any game producer could simply watch what's going over the
+USB line, and build their own code on top of that information,
+bypassing TN Games SDK completely. That would be a completely legal
+thing to do.
+
+That's why this protocol is at least obfuscated. However, there's a
+difference between obfuscated and encrypted. One could call _most_
+protocols obfuscated, because protocols are made for computers to talk
+to other computers, or other parts of themselves, in crazy math
+language that most humans don't understand. Obfuscating a protocol
+means some particularly clever person could still reverse engineer the
+communication to the device using nothing but the logs of the line
+between the device and the controlling computer. Encryption, on the
+other hand, ensures that the reverse engineer _is required_ to go
+digging through the source to look up algorithms and keys. Having
+encryption is basically the owner's due diligence they can put on top
+of their license to make sure it's enforced.
+
+Disassembly, once again, at least in the US, is a severe violation of
+the EULA and is sometimes also considered a prosecutable crime.
+
+With this in mind, let's continue.
+
+=== External Attacks
+
+Since it's obfuscated, all we can do is replay attacks for the moment. This means we can take a packet that we traced off the line from earlier, like:
+
+-----
+02 1D 52 29 1E 9E DC 05 D5 E4
+-----
+
+And start sending it to the device to see what happens.
+
+For this device, replay attacks _work_. I can send that packet
+multiple times, it is always accepted, and will activate cell
+index 1. This means the encryption is not based on any counters or
+packet ordering, it is simply per packet. This also means that, since
+SetupDevice sent no data to the device, any keys to the encryption in
+the packet must be contained in the packet itself, in one of the 9
+bytes after the 0x02 byte.
+
+This is a massive failure on the implementor's side, since it allows
+circumnavigation of the cryptography. Since there's a maximum of 8
+cells, all individually addressable, each with 255 "length" levels
+(the SDK manual says there's only 10 levels, but we'll just assume a
+whole byte here), we could simply build a table of 2040 commands by
+running every combination of SetEffect2, and create a packet lookup
+table referencable by that, i.e.
+
+-----
+| Cell Index | Speed | Packet                        |
+|------------+-------+-------------------------------|
+|          1 |     9 | ...                           |
+|          1 |    10 | 02 1D 52 29 1E 9E DC 05 D5 E4 |
+|          2 |     1 | ...                           |
+-----
+
+All we'd need to do is create a function like SetEffect2 to reference
+into that table using the index/speed parameters, and we could release
+a fully functioning library for the vest.
+
+But how much fun would that be? Let's really break stuff.
+
+== Reverse Engineering
+
+We've pulled all we can from the outside of the library. Now it's time
+to go inside. Reverse engineering the library consists of building
+small programs to access different functions of the SDK library, then
+stepping through with a debugger or disassembler to figure out exactly
+what they're doing in the assembly, since we don't have source
+code. For this project, I used
+
+- IDA Pro Free - http://www.hex-rays.com/idapro
+- OllyDbg - http://www.ollydbg.de/
+
+Mostly OllyDbg because the code isn't very complicated.
+
+=== Information from the SDK - Internal
+
+Before we start the debugger, we can get a lot of information from
+tools that come with the compiler. Here's the function definitions we
+get from the third space vest SDK header:
+
+-----
+extern int __stdcall SetUpJacket();
+extern void __stdcall TearDownJacket();
+extern int __stdcall SetEffect(int nEffect); 
+extern int __stdcall SetEffect2(int speed,int actuator); 
+extern void __stdcall FlushBuffer(int actuator); 
+extern int __stdcall GetErrorCode();
+extern char* __stdcall GetErrorText();
+-----
+
+This is a far reduced set of functions from what the library actually
+has to do to take our effect requests and send them to the
+hardware. To find out everything the library exposes, we can run the
+DUMPBIN utility like so:
+
+-----
+dumpbin /SYMBOLS tngaming.lib /OUT:symbols.txt
+-----
+
+This dumps all of the symbols in the library to a text file.
+
+We know that since this is an HID device, and it's on windows, it'll
+probably use setupapi and the HID libraries from the WDK. So, we can
+remove all of those and see what else the library has. From cleaning
+up symbols.txt, we find:
+
+-----
+SECTD   | ?FlushBuffers@@YAXXZ (void __cdecl FlushBuffers(void))
+SECTF   | _SetEffect2@8
+SECT11  | _FlushBuffer@4
+SECT13  | _GetErrorCode@0
+SECT15  | _GetErrorText@0
+SECT17  | ?LoadEffectsBuffer@@YAHH@Z (int __cdecl LoadEffectsBuffer(int))
+UNDEF   | _rand
+UNDEF   | _srand
+SECT19  | ?encrypt@@YAXPAK0@Z (void __cdecl encrypt(unsigned long *,unsigned long *))
+SECT1B  | ?decrypt@@YAXPAK0@Z (void __cdecl decrypt(unsigned long *,unsigned long *))
+SECT1D  | ?CRC8@@YAEEE@Z (unsigned char __cdecl CRC8(unsigned char,unsigned char))
+SECT1F  | ?BitSet@@YAXPAEHH@Z (void __cdecl BitSet(unsigned char *,int,int))
+SECT21  | _TearDownJacket@0
+SECT23  | _SetEffect@4
+SECT25  | ?SendEffect@@YAHHH@Z (int __cdecl SendEffect(int,int))
+UNDEF   | ?WriteReport@@YAHPAE@Z (int __cdecl WriteReport(unsigned char *))
+UNDEF   | ___security_cookie
+UNDEF   | @__security_check_cookie@4
+SECT27  | ?eventhandler@@YGIPAX@Z (unsigned int __stdcall eventhandler(void *))
+UNDEF   | __imp__Sleep@4
+SECT29  | _SetUpJacket@0
+UNDEF   | __beginthreadex
+UNDEF   | ?Connect@@YAHXZ (int __cdecl Connect(void))
+-----
+
+Ok, tons of interesting stuff in here that's not exposed via the
+header. First off, anything UNDEF means it's a symbol we'll get from
+another library. In this case, it's mostly simple libc stuff, and well
+as windows thread calls, which means the library probably deals with
+USB communication in a background thread, as is normal in SDKs like
+this.
+
+The encryption and decryption functions are there, and both take
+arrays of uint32_t's (implied, since this is a 32-bit library and
+windows has crazy ideas for 'long'), so we can't tell much from that
+so far. 
+
+SendEffect also looks interesting, since that's probably what
+communicates directly with the vest.
+
+A note here: security_cookie is a special symbol the Visual Studio
+compiler puts in for checking buffer overruns in functions. So, while
+it's certainly a security measure, it doesn't have anything to do with
+the encryption.
+
+=== Setting up test code
+
+Now that we know what the symbols in the library look like, we can
+create extern prototypes to access them from our earlier SDK
+example. Our example now looks like this:
+
+-----
+
+#include "tngaming.h"
+
+/* --- link library */
+#pragma comment(lib,"tngaming.lib")
+
+#define THREE_SECONDS (3000)
+
+
+void _cdecl encrypt(unsigned long* a, unsigned long* b);
+void _cdecl decrypt(unsigned long* a, unsigned long* b);
+void _cdecl SendEffect(int a, int b);
+unsigned char _cdecl CRC8(unsigned char, unsigned char);
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+	unsigned long a[10];
+	unsigned long b[10];
+	printf("ENCRYPTING\n");
+	encrypt(a, b);
+	printf("DECRYPTING\n");
+	decrypt(a, b);
+
+	/* Initailized gaming library */
+	printf("Setting Up\n");
+	if (SetUpJacket()  != GLIB_OK)
+	{
+		printf("Error: %s", GetErrorText());
+	}
+	
+	printf("Custom Effect - length = 10, Cell = 1\n");
+	if (SendEffect(10,1) != GLIB_OK)
+	{
+			printf("Error: %s", GetErrorText());
+	}
+
+	::Sleep(3000);
+	printf("Cleaning Up\n");
+	TearDownJacket();
+
+	return 0;
+}
+-----
+
+There are a couple of things that are uncertain with this code, simply
+due to our current lack of knowledge:
+
+- We don't know the length of the arrays encrypt/decrypt want, since
+  we don't know what algorithm they're using yet.
+- We don't know if SendEffect takes the same options at SetEffect2,
+  but since they're both ints, it's worth a try.
+
+However, calling these functions this way gives us easy places to put
+breakpoints later.
+
+The printfs are inserted as markers to tell where we are. Most
+disassemblers will show you string references next to the code, so it
+makes it easier to see what's where.
+
+Initial testing shows that calling SendEffect directly does mostly
+what we expect, firing a different cell than we get with the example,
+but still firing at the same speed.
+
+=== Encryption Reversing
+
+The first thing we want to do is figure out the encryption, because
+without it, we can figure out the protocol, but can't really send it
+over to be tested.
+
+==== Finding the Algorithm
+
+Let's look at the function disassembly for encrypt(ulong*, ulong*).
+
+-----
+
+Address   Hex dump          Command                                  Comments
+00411DC0  /> \83EC 0C       SUB ESP,0C
+00411DC3  |.  8B4C24 10     MOV ECX,DWORD PTR SS:[ARG.1]
+00411DC7  |.  8B01          MOV EAX,DWORD PTR DS:[ECX]
+00411DC9  |.  8B49 04       MOV ECX,DWORD PTR DS:[ECX+4]
+00411DCC  |.  53            PUSH EBX
+00411DCD  |.  56            PUSH ESI
+00411DCE  |.  8B7424 1C     MOV ESI,DWORD PTR SS:[ARG.2]
+00411DD2  |.  57            PUSH EDI
+00411DD3  |.  8B3E          MOV EDI,DWORD PTR DS:[ESI]
+00411DD5  |.  897C24 0C     MOV DWORD PTR SS:[LOCAL.2],EDI
+00411DD9  |.  8B7E 04       MOV EDI,DWORD PTR DS:[ESI+4]
+00411DDC  |.  897C24 20     MOV DWORD PTR SS:[ARG.2],EDI
+00411DE0  |.  8B7E 08       MOV EDI,DWORD PTR DS:[ESI+8]
+00411DE3  |.  8B76 0C       MOV ESI,DWORD PTR DS:[ESI+0C]
+00411DE6  |.  33D2          XOR EDX,EDX
+00411DE8  |.  897C24 14     MOV DWORD PTR SS:[LOCAL.0],EDI
+00411DEC  |.  897424 10     MOV DWORD PTR SS:[LOCAL.1],ESI
+00411DF0  |.  8D7A 20       LEA EDI,[EDX+20]
+00411DF3  |>  8BF1          /MOV ESI,ECX
+00411DF5  |.  C1EE 05       |SHR ESI,5
+00411DF8  |.  037424 20     |ADD ESI,DWORD PTR SS:[ARG.2]
+00411DFC  |.  8BD9          |MOV EBX,ECX
+00411DFE  |.  C1E3 04       |SHL EBX,4
+00411E01  |.  035C24 0C     |ADD EBX,DWORD PTR SS:[LOCAL.2]
+00411E05  |.  81EA 4786C861 |SUB EDX,61C88647
+00411E0B  |.  33F3          |XOR ESI,EBX
+00411E0D  |.  8D1C0A        |LEA EBX,[ECX+EDX]
+00411E10  |.  33F3          |XOR ESI,EBX
+00411E12  |.  03C6          |ADD EAX,ESI
+00411E14  |.  8BF0          |MOV ESI,EAX
+00411E16  |.  C1EE 05       |SHR ESI,5
+00411E19  |.  037424 10     |ADD ESI,DWORD PTR SS:[LOCAL.1]
+00411E1D  |.  8BD8          |MOV EBX,EAX
+00411E1F  |.  C1E3 04       |SHL EBX,4
+00411E22  |.  035C24 14     |ADD EBX,DWORD PTR SS:[LOCAL.0]
+00411E26  |.  33F3          |XOR ESI,EBX
+00411E28  |.  8D1C02        |LEA EBX,[EAX+EDX]
+00411E2B  |.  33F3          |XOR ESI,EBX
+00411E2D  |.  03CE          |ADD ECX,ESI
+00411E2F  |.  83EF 01       |SUB EDI,1
+00411E32  |.^ 75 BF         \JNE SHORT 00411DF3
+00411E34  |.  8B5424 1C     MOV EDX,DWORD PTR SS:[ARG.1]
+00411E38  |.  5F            POP EDI
+00411E39  |.  5E            POP ESI
+00411E3A  |.  8902          MOV DWORD PTR DS:[EDX],EAX
+00411E3C  |.  894A 04       MOV DWORD PTR DS:[EDX+4],ECX
+00411E3F  |.  5B            POP EBX
+00411E40  |.  83C4 0C       ADD ESP,0C
+00411E43  \.  C3            RETN
+
+-----
+
+Yup. That sure is a lot of assembly. Breaking it down:
+
+-----
+00411DC3  |.  8B4C24 10     MOV ECX,DWORD PTR SS:[ARG.1]
+00411DC7  |.  8B01          MOV EAX,DWORD PTR DS:[ECX]
+00411DC9  |.  8B49 04       MOV ECX,DWORD PTR DS:[ECX+4]
+00411DCC  |.  53            PUSH EBX
+00411DCD  |.  56            PUSH ESI
+00411DCE  |.  8B7424 1C     MOV ESI,DWORD PTR SS:[ARG.2]
+00411DD2  |.  57            PUSH EDI
+00411DD3  |.  8B3E          MOV EDI,DWORD PTR DS:[ESI]
+00411DD5  |.  897C24 0C     MOV DWORD PTR SS:[LOCAL.2],EDI
+00411DD9  |.  8B7E 04       MOV EDI,DWORD PTR DS:[ESI+4]
+00411DDC  |.  897C24 20     MOV DWORD PTR SS:[ARG.2],EDI
+00411DE0  |.  8B7E 08       MOV EDI,DWORD PTR DS:[ESI+8]
+00411DE3  |.  8B76 0C       MOV ESI,DWORD PTR DS:[ESI+0C]
+-----
+
+This is the portion of the code that's unpacking the arguments. It
+looks like it takes 2 4 byte values from argument 1, and 4 4 byte
+values from argument 2. So, it's more like:
+
+encrypt(unsigned long a[2], unsigned long b[4])
+
+For those of you that realize what algorithm this is already, please
+stay quiet so the rest of the class can be surprised.
+
+Now, the rest of the function looks like a ton of memory movement and
+shifts, as one would expect from something as math heavy as
+encryption. However, there's one line that stands out:
+
+-----
+00411E05  |.  81EA 4786C861 |SUB EDX,61C88647
+-----
+
+That's a large, weird constant. Some might even say it's
+_magic_. Let's plug it into google and see what happens.
+
+No, really just go to
+
+http://www.google.com/search?q=61C88647
+
+It's amazing how often that works for magic numbers. Google is the
+reverse engineer's best friend. You can even use it to search for
+similar disassembly if you know how to phrase your search correctly.
+
+From the search returns, we see a lot of references to the TEA
+algorithms. A quick trip over to wikipedia:
+
+http://en.wikipedia.org/wiki/Tiny_Encryption_Algorithm
+
+Confirms that the algorithm takes a 64-byte block, and a 128-byte
+cache key, which lines up with what we figured out earlier when
+looking at the arguments.
+
+It even nets us source code:
+
+-----
+void encrypt (uint32_t* v, uint32_t* k) {
+    uint32_t v0=v[0], v1=v[1], sum=0, i;           /* set up */
+    uint32_t delta=0x9e3779b9;                     /* a key schedule constant */
+    uint32_t k0=k[0], k1=k[1], k2=k[2], k3=k[3];   /* cache key */
+    for (i=0; i < 32; i++) {                       /* basic cycle start */
+        sum += delta;
+        v0 += ((v1<<4) + k0) ^ (v1 + sum) ^ ((v1>>5) + k1);
+        v1 += ((v0<<4) + k2) ^ (v0 + sum) ^ ((v0>>5) + k3);  
+    }                                              /* end cycle */
+    v[0]=v0; v[1]=v1;
+-----
+
+All of those shifts match up with what we see in the disassembly,
+though the constant is different. However, we see in the wikipedia
+article that the constant just needs to the golden ratio +/- k, k
+being an integer. Dividing 2^32 by 0x61C88647 gives us (t + 1), t
+being the golden ratio. So, we're fine. We could even switch it out
+with 0x9e3779b9, and there's be no difference in output.
+
+So, we know the algorithm! But the question is, what arguments is it
+taking?
+
+==== Argument Analysis
+
+From wikipedia, we know are arguments are:
+
+- A 64-bit block
+- A 128-bit cache key
+
+Putting a breakpoint on the encrypt function in the jump table, we run
+the program from the "Setting Up the Test Code" function earlier,
+commenting out the direct encrypt/decrypt calls to see what happens
+when SendEffect is run (which, logically, at some point has to call
+encrypt to turn the command into something that will look like what we
+saw on the USB line). Sure enough, the breakpoint is hit on encrypt,
+with SendEffect lower on the stack. Checking the arguments, the first
+thing to notice is that the first argument, the 64-bit block, never
+changes. It is always:
+
+-----
+0x0 0x0 0x0 0x0 0x0A 0x01 0x23 0x00
+-----
+
+However, the second argument, the cache key, is different every time
+the function is called. We infer that this is generated by SendEffect
+at some point. However, knowing the algorithm used and what the
+command packet looks like unencrypted, we can move on to figuring out
+where the cache key comes from, and how the command is built.
+
+=== Hand Decompiling SendEffect()
+
+Now that we know what's going on over the line, it's time to figure
+out how we can build commands to send to the hardware, and how to
+generate our own cache keys. Since SendEffect called in a look calls
+encrypt multiple times, we can assume that command block and cache key
+construction happen there. Looking at the disassembly should lead us
+to the information we require to finish our driver.
+
+While the assembly here is unobfuscated and could be taken apart
+fairly quickly by a decompiler, we'll step through the function by
+hand to make things clearer.
+
+==== Disassembly
+
+To start, here's the full disassembly of SendEffect from OllyDbg
+
+-----
+CPU Disasm
+Address   Hex dump          Command                                  Comments
+00412050  /> \83EC 2C       SUB ESP,2C
+00412053  |.  A1 DC944100   MOV EAX,DWORD PTR DS:[__security_cookie]
+00412058  |.  33C4          XOR EAX,ESP
+0041205A  |.  894424 28     MOV DWORD PTR SS:[LOCAL.0],EAX
+0041205E  |.  53            PUSH EBX
+0041205F  |.  55            PUSH EBP
+00412060  |.  33C0          XOR EAX,EAX
+00412062  |.  56            PUSH ESI
+00412063  |.  33DB          XOR EBX,EBX
+00412065  |.  57            PUSH EDI
+00412066  |.  53            PUSH EBX
+00412067  |.  885C24 2C     MOV BYTE PTR SS:[LOCAL.4],BL
+0041206B  |.  894424 2D     MOV DWORD PTR SS:[ESP+2D],EAX
+0041206F  |.  894424 31     MOV DWORD PTR SS:[ESP+31],EAX
+00412073  |.  894424 35     MOV DWORD PTR SS:[ESP+35],EAX
+00412077  |.  66:894424 39  MOV WORD PTR SS:[ESP+39],AX
+0041207C  |.  894424 20     MOV DWORD PTR SS:[LOCAL.7],EAX
+00412080  |.  894424 24     MOV DWORD PTR SS:[LOCAL.6],EAX
+00412084  |.  894424 28     MOV DWORD PTR SS:[LOCAL.5],EAX
+00412088  |.  895C24 18     MOV DWORD PTR SS:[LOCAL.9],EBX
+0041208C  |.  E8 63F1FFFF   CALL 004111F4                            ; Jump to MSVCR100D._time64
+00412091  |.  50            PUSH EAX
+00412092  |.  E8 A0EFFFFF   CALL 00411037                            ; Jump to MSVCR100D.srand
+00412097  |.  E8 E5F0FFFF   CALL 00411181                            ; Jump to MSVCR100D.rand
+0041209C  |.  0FB67424 4C   MOVZX ESI,BYTE PTR SS:[ESP+4C]
+004120A1  |.  99            CDQ
+004120A2  |.  B9 FF000000   MOV ECX,0FF
+004120A7  |.  F7F9          IDIV ECX
+004120A9  |.  8BC6          MOV EAX,ESI
+004120AB  |.  C1E8 04       SHR EAX,4
+004120AE  |.  8A80 646A4100 MOV AL,BYTE PTR DS:[EAX+416A64]
+004120B4  |.  0FB6C8        MOVZX ECX,AL
+004120B7  |.  C1E9 04       SHR ECX,4
+004120BA  |.  33CE          XOR ECX,ESI
+004120BC  |.  83E1 0F       AND ECX,0000000F
+004120BF  |.  C0E0 04       SHL AL,4
+004120C2  |.  3281 646A4100 XOR AL,BYTE PTR DS:[ECX+416A64]
+004120C8  |.  8B4C24 48     MOV ECX,DWORD PTR SS:[ESP+48]
+004120CC  |.  0FB6F9        MOVZX EDI,CL
+004120CF  |.  885C24 30     MOV BYTE PTR SS:[ESP+30],BL
+004120D3  |.  0FB6D8        MOVZX EBX,AL
+004120D6  |.  C0E0 04       SHL AL,4
+004120D9  |.  8BEF          MOV EBP,EDI
+004120DB  |.  C1EB 04       SHR EBX,4
+004120DE  |.  C1ED 04       SHR EBP,4
+004120E1  |.  33DD          XOR EBX,EBP
+004120E3  |.  3283 646A4100 XOR AL,BYTE PTR DS:[EBX+416A64]
+004120E9  |.  C1E1 08       SHL ECX,8
+004120EC  |.  0FB6D8        MOVZX EBX,AL
+004120EF  |.  03CE          ADD ECX,ESI
+004120F1  |.  C1E1 08       SHL ECX,8
+004120F4  |.  C0E0 04       SHL AL,4
+004120F7  |.  C1EB 04       SHR EBX,4
+004120FA  |.  33DF          XOR EBX,EDI
+004120FC  |.  0FB6C0        MOVZX EAX,AL
+004120FF  |.  83E3 0F       AND EBX,0000000F
+00412102  |.  0FB6BB 646A41 MOVZX EDI,BYTE PTR DS:[EBX+416A64]
+00412109  |.  33F8          XOR EDI,EAX
+0041210B  |.  0FB682 FA6841 MOVZX EAX,BYTE PTR DS:[EDX+4168FA]
+00412112  |.  03F9          ADD EDI,ECX
+00412114  |.  0FB68A FB6841 MOVZX ECX,BYTE PTR DS:[EDX+4168FB]
+0041211B  |.  C1E1 08       SHL ECX,8
+0041211E  |.  03C8          ADD ECX,EAX
+00412120  |.  0FB682 F96841 MOVZX EAX,BYTE PTR DS:[EDX+4168F9]
+00412127  |.  C1E1 08       SHL ECX,8
+0041212A  |.  03C8          ADD ECX,EAX
+0041212C  |.  0FB682 F86841 MOVZX EAX,BYTE PTR DS:[EDX+4168F8]
+00412133  |.  C1E1 08       SHL ECX,8
+00412136  |.  03C8          ADD ECX,EAX
+00412138  |.  0FB682 FE6841 MOVZX EAX,BYTE PTR DS:[EDX+4168FE]
+0041213F  |.  894C24 20     MOV DWORD PTR SS:[ESP+20],ECX
+00412143  |.  0FB68A FF6841 MOVZX ECX,BYTE PTR DS:[EDX+4168FF]
+0041214A  |.  C1E1 08       SHL ECX,8
+0041214D  |.  03C8          ADD ECX,EAX
+0041214F  |.  0FB682 FD6841 MOVZX EAX,BYTE PTR DS:[EDX+4168FD]
+00412156  |.  C1E1 08       SHL ECX,8
+00412159  |.  03C8          ADD ECX,EAX
+0041215B  |.  0FB682 FC6841 MOVZX EAX,BYTE PTR DS:[EDX+4168FC]
+00412162  |.  C1E7 08       SHL EDI,8
+00412165  |.  C1E1 08       SHL ECX,8
+00412168  |.  C64424 31 02  MOV BYTE PTR SS:[ESP+31],2
+0041216D  |.  885424 32     MOV BYTE PTR SS:[ESP+32],DL
+00412171  |.  C74424 18 000 MOV DWORD PTR SS:[ESP+18],0
+00412179  |.  897C24 1C     MOV DWORD PTR SS:[ESP+1C],EDI
+0041217D  |.  03C8          ADD ECX,EAX
+0041217F  |.  0FB682 026941 MOVZX EAX,BYTE PTR DS:[EDX+416902]
+00412186  |.  894C24 24     MOV DWORD PTR SS:[ESP+24],ECX
+0041218A  |.  0FB68A 036941 MOVZX ECX,BYTE PTR DS:[EDX+416903]
+00412191  |.  C1E1 08       SHL ECX,8
+00412194  |.  03C8          ADD ECX,EAX
+00412196  |.  0FB682 016941 MOVZX EAX,BYTE PTR DS:[EDX+416901]
+0041219D  |.  C1E1 08       SHL ECX,8
+004121A0  |.  03C8          ADD ECX,EAX
+004121A2  |.  0FB682 006941 MOVZX EAX,BYTE PTR DS:[EDX+416900]
+004121A9  |.  C1E1 08       SHL ECX,8
+004121AC  |.  03C8          ADD ECX,EAX
+004121AE  |.  0FB682 066941 MOVZX EAX,BYTE PTR DS:[EDX+416906]
+004121B5  |.  894C24 28     MOV DWORD PTR SS:[ESP+28],ECX
+004121B9  |.  0FB68A 076941 MOVZX ECX,BYTE PTR DS:[EDX+416907]
+004121C0  |.  C1E1 08       SHL ECX,8
+004121C3  |.  03C8          ADD ECX,EAX
+004121C5  |.  0FB682 056941 MOVZX EAX,BYTE PTR DS:[EDX+416905]
+004121CC  |.  0FB692 046941 MOVZX EDX,BYTE PTR DS:[EDX+416904]
+004121D3  |.  C1E1 08       SHL ECX,8
+004121D6  |.  03C8          ADD ECX,EAX
+004121D8  |.  C1E1 08       SHL ECX,8
+004121DB  |.  03CA          ADD ECX,EDX
+004121DD  |.  8D4424 20     LEA EAX,[ESP+20]
+004121E1  |.  894C24 2C     MOV DWORD PTR SS:[ESP+2C],ECX
+004121E5  |.  50            PUSH EAX
+004121E6  |.  8D4C24 1C     LEA ECX,[ESP+1C]
+004121EA  |.  51            PUSH ECX
+004121EB  |.  E8 4FF0FFFF   CALL 0041123F
+004121F0  |.  8B4424 20     MOV EAX,DWORD PTR SS:[ESP+20]
+004121F4  |.  8BD0          MOV EDX,EAX
+004121F6  |.  C1EA 18       SHR EDX,18
+004121F9  |.  885424 3E     MOV BYTE PTR SS:[ESP+3E],DL
+004121FD  |.  8BC8          MOV ECX,EAX
+004121FF  |.  C1E9 10       SHR ECX,10
+00412202  |.  8BD0          MOV EDX,EAX
+00412204  |.  C1EA 08       SHR EDX,8
+00412207  |.  884C24 3D     MOV BYTE PTR SS:[ESP+3D],CL
+0041220B  |.  884424 3B     MOV BYTE PTR SS:[ESP+3B],AL
+0041220F  |.  8B4424 24     MOV EAX,DWORD PTR SS:[ESP+24]
+00412213  |.  885424 3C     MOV BYTE PTR SS:[ESP+3C],DL
+00412217  |.  8BC8          MOV ECX,EAX
+00412219  |.  C1E9 18       SHR ECX,18
+0041221C  |.  8BD0          MOV EDX,EAX
+0041221E  |.  C1EA 10       SHR EDX,10
+00412221  |.  884C24 42     MOV BYTE PTR SS:[ESP+42],CL
+00412225  |.  885424 41     MOV BYTE PTR SS:[ESP+41],DL
+00412229  |.  8BC8          MOV ECX,EAX
+0041222B  |.  8D5424 38     LEA EDX,[ESP+38]
+0041222F  |.  C1E9 08       SHR ECX,8
+00412232  |.  52            PUSH EDX
+00412233  |.  884C24 44     MOV BYTE PTR SS:[ESP+44],CL
+00412237  |.  884424 43     MOV BYTE PTR SS:[ESP+43],AL
+0041223B  |.  E8 C3EFFFFF   CALL 00411203
+00412240  |.  83C4 14       ADD ESP,14
+00412243  |.  85C0          TEST EAX,EAX
+00412245  |.  5F            POP EDI
+00412246  |.  5E            POP ESI
+00412247  |.  5D            POP EBP
+00412248  |.  5B            POP EBX
+00412249  |.  74 1B         JE SHORT 00412266
+0041224B  |.  C705 BC934100 MOV DWORD PTR DS:[?nCurrentError@@3HA],0
+00412255  |.  33C0          XOR EAX,EAX
+00412257  |.  8B4C24 28     MOV ECX,DWORD PTR SS:[ESP+28]
+0041225B  |.  33CC          XOR ECX,ESP
+0041225D  |.  E8 CBEDFFFF   CALL 0041102D                            ; [__security_check_cookie
+00412262  |.  83C4 2C       ADD ESP,2C
+00412265  |.  C3            RETN
+00412266  |>  8B4C24 28     MOV ECX,DWORD PTR SS:[ESP+28]
+0041226A  |.  B8 03000000   MOV EAX,3
+0041226F  |.  33CC          XOR ECX,ESP
+00412271  |.  C605 78974100 MOV BYTE PTR DS:[?bLibRunning@@3_NA],0
+00412278  |.  A3 BC934100   MOV DWORD PTR DS:[?nCurrentError@@3HA],E
+0041227D  |.  E8 ABEDFFFF   CALL 0041102D                            ; [__security_check_cookie
+00412282  |.  83C4 2C       ADD ESP,2C
+00412285  \.  C3            RETN
+-----
+
+==== Who's calling what, where
+
+The system functions are commented by ollydbg, but I didn't have it
+analyze the block before I pasted, so our local symbols aren't seen.
+
+- CALL 0041123F : Calling encrypt - Means our packet formation has to
+  happen before this.
+- CALL 0041102D : Calling WriteReport - sending the data to the USB
+  device
+
+==== Command Packet Analysis and Checksum Building
+
+Here's the block our call to SendEffect(10, 1) is forming and sending
+to the encrypt function, which we saw earlier:
+
+-----
+0x0 0x0 0x0 0x0 0x0A 0x01 0x23 0x00
+-----
+
+We can easily see where our speed and index are set in there. Byte 4
+is speed, byte 5 is cell index. What's byte 6, though? It looks like
+some sort of checksum.
+
+Let's take a look at the relevant assembly from the function, with
+comments:
+
+-----
+...
+004120A9  |.  8BC6          MOV EAX,ESI
+004120AB  |.  C1E8 04       SHR EAX,4
+004120AE  |.  8A80 646A4100 MOV AL,BYTE PTR DS:[EAX+416A64]
+004120B4  |.  0FB6C8        MOVZX ECX,AL
+004120B7  |.  C1E9 04       SHR ECX,4
+004120BA  |.  33CE          XOR ECX,ESI
+004120BC  |.  83E1 0F       AND ECX,0000000F
+004120BF  |.  C0E0 04       SHL AL,4
+004120C2  |.  3281 646A4100 XOR AL,BYTE PTR DS:[ECX+416A64]
+004120C8  |.  8B4C24 48     MOV ECX,DWORD PTR SS:[ESP+48]
+004120CC  |.  0FB6F9        MOVZX EDI,CL
+004120CF  |.  885C24 30     MOV BYTE PTR SS:[ESP+30],BL
+004120D3  |.  0FB6D8        MOVZX EBX,AL
+004120D6  |.  C0E0 04       SHL AL,4
+004120D9  |.  8BEF          MOV EBP,EDI
+004120DB  |.  C1EB 04       SHR EBX,4
+004120DE  |.  C1ED 04       SHR EBP,4
+004120E1  |.  33DD          XOR EBX,EBP
+004120E3  |.  3283 646A4100 XOR AL,BYTE PTR DS:[EBX+416A64]
+004120E9  |.  C1E1 08       SHL ECX,8
+004120EC  |.  0FB6D8        MOVZX EBX,AL
+004120EF  |.  03CE          ADD ECX,ESI
+004120F1  |.  C1E1 08       SHL ECX,8
+004120F4  |.  C0E0 04       SHL AL,4
+004120F7  |.  C1EB 04       SHR EBX,4
+004120FA  |.  33DF          XOR EBX,EDI
+004120FC  |.  0FB6C0        MOVZX EAX,AL
+004120FF  |.  83E3 0F       AND EBX,0000000F
+00412102  |.  0FB6BB 646A41 MOVZX EDI,BYTE PTR DS:[EBX+416A64]
+00412109  |.  33F8          XOR EDI,EAX
+...
+-----
+
+So, first off, we see lots of references to 0x416A64, which refers to
+data in the heap. If we go there, we see:
+
+-----
+CPU Dump
+Address   Hex dump                                         
+00416A64  00 07 0E 09|1C 1B 12 15|38 3F 36 31|24 23 2A 2D| 
+-----
+
+Huh. Those are the first 16 values of a CRC8 table! However, there's a
+CRC8 function in the library; we saw that when we did the symbol dump
+earlier. Also, full CRC8 tables have 255 values in their LUT, this
+only has 16. So, if we look at the assembly:
+
+- It's loading the index (already loaded this into AL before the
+  block), then the speed.
+- We see a lot of moving into low bytes of registers and then shifting
+  right 4. This means we're just operating on nybbles most of the
+  time.
+- It's not actually calling CRC8 anywhere.
+
+So, this is its own checksum function. Therefore, it's down to
+figuring out the specific register moves and reversing that into
+something usable. 
+
+Via a bunch of magic (where magic equals keeping notes and figuring
+out who's holding what, and when), we get the following checksum
+function in python:
+
+-----
+crc8_table = [0x00, 0x07, 0x0E, 0x09, 
+              0x1C, 0x1B, 0x12, 0x15, 
+              0x38, 0x3F, 0x36, 0x31, 
+              0x24, 0x23, 0x2A, 0x2D]
+
+def form_checksum(self, index, speed):
+    cell_index = index & 0x0f # This should usually = index
+    a = (crc8_table[cell_index] << 4) & 0xFF
+    b = (crc8_table[cell_index] >> 4) ^ (speed >> 4)
+    c = a ^ crc8_table[b]
+    d = (c << 4) & 0xFF
+    final_crc = crc8_table[((c >> 4) ^ speed) & 0x0F] ^ d
+    return final_crc
+-----
+
+All of the & 0xFF's are just to make sure we're truncating to 8-bit
+values properly. But, this is what byte 6 of the packet is. So now we
+know how to form the 8 bytes the encryption function wants. We can
+make
+
+-----
+0x0 0x0 0x0 0x0 0x0A 0x01 0x23 0x00
+-----
+
+in python by just making a list, and filling it in with our index,
+speed, and the checksum as formed by above. However, we have to
+encrypt that before it goes to the device. So how do we get our cache
+key to run the encryption function?
+
+
+==== Cache Key Construction
+
+First off, the cache key does not need to be rebuilt like it is in the
+library. In fact, you can just build one cache key once, ever, and use
+it forever and ever more. See the Useless Key Construction portion of
+the addendum.
+
+However we do the cache key construction analysis here for sake of
+completeness.
+
+Let's go back to the disassembly:
+
+-----
+0041208C  |.  E8 63F1FFFF   CALL 004111F4                            ; Jump to MSVCR100D._time64
+00412091  |.  50            PUSH EAX
+00412092  |.  E8 A0EFFFFF   CALL 00411037                            ; Jump to MSVCR100D.srand
+00412097  |.  E8 E5F0FFFF   CALL 00411181                            ; Jump to MSVCR100D.rand
+0041209C  |.  0FB67424 4C   MOVZX ESI,BYTE PTR SS:[ESP+4C]
+004120A1  |.  99            CDQ
+004120A2  |.  B9 FF000000   MOV ECX,0FF
+004120A7  |.  F7F9          IDIV ECX
+004120A9  |.  8BC6          MOV EAX,ESI
+-----
+
+Now, from the system calls, we can tell it's a normal random seeding
+and generation function, though the seed is being recalulated on every
+call to SendEffect, which is a bad idea. But, that's not really
+important. We get the random 32-bit value, then those last two lines
+are the value being taken modulo 255. IDIV takes the value in EAX and
+divides it by the argument given, and stores the quotient in EAX, and
+remainder in EDX. Notice that right after we call IDIV, we move the
+value of ESI into EAX. That means that we didn't care about the
+quotient, so in C this probably looks like:
+
+-----
+srand(time())
+int val = rand() % 255 
+-----
+
+Now, EDX isn't touched again until the following block:
+
+-----
+...
+0041210B  |.  0FB682 FA6841 MOVZX EAX,BYTE PTR DS:[EDX+4168FA]
+(unrelated instruction removed)
+00412114  |.  0FB68A FB6841 MOVZX ECX,BYTE PTR DS:[EDX+4168FB]
+0041211B  |.  C1E1 08       SHL ECX,8
+0041211E  |.  03C8          ADD ECX,EAX
+00412120  |.  0FB682 F96841 MOVZX EAX,BYTE PTR DS:[EDX+4168F9]
+00412127  |.  C1E1 08       SHL ECX,8
+0041212A  |.  03C8          ADD ECX,EAX
+0041212C  |.  0FB682 F86841 MOVZX EAX,BYTE PTR DS:[EDX+4168F8]
+00412133  |.  C1E1 08       SHL ECX,8
+00412136  |.  03C8          ADD ECX,EAX
+00412138  |.  0FB682 FE6841 MOVZX EAX,BYTE PTR DS:[EDX+4168FE]
+(continue with lots of code like this)
+-----
+
+Where its used as an offset into a block starting at 0x4168F8. In this
+block, we're taking a value from that block, then the value before it,
+shifting, then adding them. Repeat until we have a 4 byte value. We do
+this 4 times between 0x0041210B and 0x004121CC. This must be where the
+cache key is getting formed!
+
+So, the insides of SendEffect look like this:
+
+- Get a random number in range 0-255. We will call this the Cache Key
+  Index.
+- Use the Cache Key Index as an offset to construct a cache key from a
+  static block of data.
+
+For the sake of completeness, the cache key block starting at 0x4168F8
+is
+
+-----
+[0x55, 0x02, 0x15, 0x2E, 0x41, 0x3D, 0x0B, 0x6D, 0x17, 0x02, 0x5F, 0x24, 0x12, 0x3E, 0x6F, 0x5F, 0x2E, 0x1C,
+ 0x57, 0x6B, 0x27, 0x08, 0x71, 0x52, 0x7A, 0x2E, 0x5B, 0x62, 0x62, 0x7B, 0x70, 0x26, 0x5B, 0x19,
+ 0x4C, 0x6B, 0x21, 0x76, 0x4C, 0x3C, 0x31, 0x3E, 0x0A, 0x64, 0x46, 0x5B, 0x64, 0x72, 0x5C, 0x7B, 
+ 0x75, 0x2F, 0x2F, 0x09, 0x1A, 0x29, 0x3C, 0x31, 0x6E, 0x2B, 0x3E, 0x60, 0x4D, 0x41, 0x31, 0x41,
+ 0x53, 0x37, 0x51, 0x40, 0x5C, 0x1A, 0x1B, 0x09, 0x05, 0x35, 0x49, 0x09, 0x29, 0x14, 0x5A, 0x6A,
+ 0x64, 0x03, 0x07, 0x1A, 0x13, 0x0F, 0x4E, 0x45, 0x51, 0x03, 0x69, 0x55, 0x7A, 0x6B, 0x56, 0x78,
+ 0x2A, 0x14, 0x51, 0x19, 0x3D, 0x08, 0x54, 0x64, 0x50, 0x15, 0x1D, 0x46, 0x3E, 0x46, 0x27, 0x6A, 
+ 0x23, 0x68, 0x2F, 0x3C, 0x5C, 0x05, 0x2F, 0x68, 0x03, 0x6B, 0x65, 0x5B, 0x76, 0x26, 0x4C, 0x3F, 
+ 0x51, 0x00, 0x21, 0x03, 0x6E, 0x07, 0x5E, 0x50, 0x6B, 0x06, 0x41, 0x13, 0x23, 0x09, 0x45, 0x79, 
+ 0x32, 0x5C, 0x27, 0x6D, 0x75, 0x0C, 0x61, 0x1B, 0x06, 0x64, 0x31, 0x70, 0x43, 0x70, 0x12, 0x17, 
+ 0x48, 0x7C, 0x41, 0x7C, 0x6F, 0x15, 0x38, 0x4B, 0x56, 0x06, 0x35, 0x71, 0x58, 0x5B, 0x33, 0x19, 
+ 0x11, 0x61, 0x6F, 0x2F, 0x5D, 0x22, 0x63, 0x5F, 0x59, 0x6C, 0x4D, 0x15, 0x60, 0x4A, 0x28, 0x7E, 
+ 0x0E, 0x09, 0x30, 0x05, 0x40, 0x33, 0x62, 0x57, 0x11, 0x16, 0x79, 0x5E, 0x5D, 0x3D, 0x71, 0x48, 
+ 0x40, 0x75, 0x06, 0x00, 0x16, 0x49, 0x35, 0x32, 0x7C, 0x04, 0x39, 0x4B, 0x4D, 0x35, 0x0E, 0x76,
+ 0x25, 0x25, 0x70, 0x1F, 0x61, 0x62, 0x5C, 0x72, 0x1B, 0x37, 0x0D, 0x5B, 0x31, 0x30, 0x7F, 0x07, 
+ 0x3F, 0x19, 0x6E, 0x61, 0x1F, 0x7F, 0x57, 0x16, 0x6F, 0x2D, 0x75, 0x10, 0x0A, 0x2F, 0x44, 0x7D, 
+ 0x0C, 0x51, 0x00, 0x48, 0x52, 0x20, 0x26, 0x1D, 0x76, 0x67, 0x71, 0x69, 0x56, 0x32, 0x5D, 0x57, 
+ 0x0E, 0x4E, 0x26, 0x53, 0x78, 0x45, 0x49, 0x09, 0x32, 0x65, 0x01, 0x66, 0x17, 0x39, 0x4A, 0x14, 
+ 0x43, 0x0E, 0x60, 0x01, 0x13, 0x6F, 0x40, 0x59, 0x21, 0x27, 0x25, 0x06, 0x4B, 0x45, 0x0B, 0x36, 
+ 0x2C, 0x12, 0x2E, 0x54, 0x21, 0x1C, 0x0B, 0x0C, 0x45, 0x2E, 0x5D, 0x4B, 0x74, 0x54, 0x20, 0x3C, 
+ 0x4A, 0x5A, 0x10, 0x4B, 0x23, 0x4D, 0x2A, 0x24, 0x1C, 0x78, 0x28, 0x34, 0x10, 0x67, 0x09, 0x25, 
+ 0x1B, 0x66, 0x06, 0x65, 0x1A, 0x02, 0x1D, 0x20, 0x28, 0x06, 0x08, 0x40, 0x21, 0x7E, 0x45, 0x73, 
+ 0x21, 0x37, 0x10, 0x24, 0x04, 0x3B, 0x63, 0x7F, 0x67, 0x58]
+-----
+
+So, we choose a starting value, and take the next 16 bytes after that,
+forming them into little-endian integer values to create our cache key.
+
+If we keep running our debugger after cache key formation, we can see
+how this information is used on the remote device. Remember how the
+encrypted packet looks like:
+
+-----
+02 1D 52 29 1E 9E DC 05 D5 E4
+-----
+
+So, byte 1 matches the Cache Key Index for the packet being formed. On
+the USB device in the vest, the same data table and algorithm exist,
+so that the device can form the cache key to decrypt the
+code. We now know the complete packet structure!
+
+==== Final Packet Structures
+
+Encrypted Packet:
+
+-----
+02 1D 52 29 1E 9E DC 05 D5 E4
+
+Byte 0: Always 0x02
+Byte 1: Cache Key Index
+Byte 2-9: Encrypted data
+-----
+
+Decrypted Data Portion:
+
+-----
+0x0 0x0 0x0 0x0 0x0A 0x05 0x77 0x00
+
+Byte 0-3: Always 0x0
+Byte 4: "Speed"
+Byte 5: Cell Index
+Byte 6: Checksum of those two values
+Byte 7: Always 0
+-----
+
+=== Addendum
+
+==== Useless Key Construction
+
+Cache Key Construction only needs to be done *ONCE, EVER*. Not even
+once per process run. You could just generate one index and one cache
+key, store those as constants and always use those, and the hardware
+doesn't care. You can use the same cache key every packet. Here, I'll
+give you one now:
+
+-----
+KEY INDEX - 0xD5
+CACHE KEY - {0x35491600, 0x39047C32, 0x0E354D4B, 0x70252576}
+-----
+
+Testing this with the python library shows that the hardware does not
+react when the cache index is left the same. 
+
+==== Cell Indexing Oddities
+
+Earlier in the document, it was mentioned that the index sent to
+SetEffect2 does not match the index in SendEffect. In the SDK manual,
+the air cells are listed as the follow:
+
+-----
+1: Front Top Right 
+2: Front Top Left
+3: Front Lower Right
+4: Front Lower Left
+5: Back Top Right 
+6: Back Top Left
+7: Back Lower Right
+8: Back Lower Left
+-----
+
+However, in the disassembly of SetEffect2, there's a switch table that
+changes these. Via direct calls to SendEffect, the cells are addressed
+as
+
+-----
+0: Back Lower Left
+1: Back Top Left
+2: Front Top Left
+3: Front Lower Left
+4: Front Lower Right
+5: Front Top Right
+6: Back Top Right
+7: Back Lower Right
+-----
+
+Why they did this, I don't know. I guess maybe it's easier to remember
+the index that way.
+
+==== Flow of SDK Operation
+
+Here's what it seems the SDK is doing, from poking around:
+
+- SetupJacket() creates a thread safe queue, and starts the I/O
+  thread, which in turn opens the device.  for the library to put
+  effects in.
+- SetEffect calls a LoadEffectsBuffer, which loads a large chunk of
+  prebuild commands into memory. It then queues the commands into the
+  vest's buffer, to be replayed by the thread.
+- SetEffect2 adjusts the index based on the table mentioned above, and
+  puts the command in the queue for the thread.
+- eventwatcher loops, waiting for information to enter the buffer. If
+  there is an effect to play in the buffer, it sends it to
+  SendEffect().
+- SendEffect is outlined in great detail above.
+- TeardownJacket() stops the I/O thread, which closes the device.

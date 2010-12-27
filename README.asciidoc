@@ -1,0 +1,68 @@
+== libthirdspacevest
+
+by Kyle Machulis <kyle@nonpolynomial.com>
+Nonpolynomial Labs - http://www.nonpolynomial.com
+
+== Description
+
+libthirdspacevest is an open-source, cross-platform (almost) driver
+for the TN Games Third Space Vest. This vest uses pneumatic cells in
+order to let gamers feel physical collisions from things like bullets
+in first person shooters.
+
+More information on the hardware can be found at
+
+http://www.tngames.com
+
+Information on the vest protocol, as well as the guide to reverse
+engineering the vest and notes taken during the process, can be found
+in the doc directory, or at
+
+https://github.com/qdot/libthirdspacevest/blob/master/doc/third_space_vest_reverse_engineering.asciidoc
+
+== Requirements
+
+=== Python
+
+Version 2.5 or greater
+http://www.python.org
+
+=== PyUSB >= 1.0.a1
+
+http://sourceforge.net/apps/mediawiki/pyusb/index.php?title=Main_Page
+
+== Future Plans
+
+- C Library with Win32HID and libusb-1.0 Support (ASAP)
+- OS X kext (ASAP)
+- Enumeration of effects provided in tngaming.lib
+- PD/Max Externals
+
+== Things to note
+
+- The device will run without the air pump on. You won't get very hard
+  hits, but it at least works for testing and is definitely audible.
+- The maximum firing rate seems to be about 10hz, and that keeps the
+  pump on constantly. I hate that pump so much.
+
+== Platform Specifics
+
+=== Linux
+
+Until we get udev rules in, you'll probably need to run the script as
+root. Additionally, since the device registers as HID, it'll have to
+detach itself from the kernel driver. We already do this for you, and
+we do not reattach afterward.
+
+=== Mac OS X
+
+Since the device registers as HID, a kext will need to be created to
+shunt the HID manager from picking up the device. This will be coming
+soon.
+
+=== Windows
+
+This will not currently work on windows because of the use of libusb,
+which doesn't interface with windows HID. The code to port this to
+windows shouldn't be difficult, and will hopefully be done in a few
+days.
