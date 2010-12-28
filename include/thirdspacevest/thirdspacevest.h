@@ -1,0 +1,227 @@
+/*
+ * Declaration file for Third Space Vest User Space Driver
+ *
+ * Copyright (c) 2010 Kyle Machulis <kyle@nonpolynomial.com>
+ *
+ * More info on Nonpolynomial Labs @ http://www.nonpolynomial.com
+ *
+ * Sourceforge project @ http://www.github.com/qdot/libomron/
+ *
+ * This library is covered by the BSD License
+ * Read LICENSE_BSD.txt for details.
+ */
+
+#ifndef LIBTHIRDSPACEVEST_H
+#define LIBTHIRDSPACEVEST_H
+
+/*******************************************************************************
+ *
+ * Headers
+ *
+ ******************************************************************************/
+
+#define E_NPUTIL_DRIVER_ERROR -1
+#define E_NPUTIL_NOT_INITED -2
+#define E_NPUTIL_NOT_OPENED -3
+
+#include <stdint.h>
+
+#if defined(WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#if defined(THIRDSPACEVEST_DYNAMIC)
+#define THIRDSPACEVEST_DECLSPEC __declspec(dllexport)
+#else
+#define THIRDSPACEVEST_DECLSPEC
+#endif
+
+/**
+ * Structure to hold information about Windows HID devices.
+ *
+ * @ingroup CoreFunctions
+ */
+typedef struct {
+	/// Windows device handle
+	HANDLE _dev;
+	/// 0 if device is closed, > 0 otherwise
+	int _is_open;
+	/// 0 if device is initialized, > 0 otherwise
+	int _is_inited;
+} thirdspacevest_device;
+#else
+#define THIRDSPACEVEST_DECLSPEC
+#include "libusb-1.0/libusb.h"
+typedef struct {
+	struct libusb_context* _context;
+	struct libusb_device_handle* _device;
+	struct libusb_transfer* _in_transfer;
+	struct libusb_transfer* _out_transfer;
+	int _is_open;
+	int _is_inited;
+} thirdspacevest_device;
+#endif
+
+/*******************************************************************************
+ *
+ * Const global values
+ *
+ ******************************************************************************/
+
+/// Vendor ID for all omron health devices
+const static uint32_t THIRDSPACEVEST_VID = 0x1BD7;
+/// Product ID for all omron health devices
+const static uint32_t THIRDSPACEVEST_PID = 0x5000;
+
+/// Out endpoint for third space vest devices
+const static uint32_t THIRDSPACEVEST_OUT_ENDPT = 0x01;
+/// In endpoint for third space vest devices
+const static uint32_t THIRDSPACEVEST_IN_ENDPT  = 0x82;
+
+const static uint8_t THIRDSPACEVEST_CRC8_TABLE[16] =
+{0x00, 0x07, 0x0E, 0x09,
+ 0x1C, 0x1B, 0x12, 0x15,
+ 0x38, 0x3F, 0x36, 0x31,
+ 0x24, 0x23, 0x2A, 0x2D};
+
+// The cache key creation table. Not explicitly needed since we can
+// use the same cache key over and over, but whatever.
+const static uint8_t THIRDSPACEVEST_CACHE_KEY_TABLE[364] = 
+{0x55, 0x02, 0x15, 0x2E, 0x41, 0x3D, 0x0B, 0x6D,
+ 0x17, 0x02, 0x5F, 0x24, 0x12, 0x3E, 0x6F, 0x5F,
+ 0x2E, 0x1C, 0x57, 0x6B, 0x27, 0x08, 0x71, 0x52,
+ 0x7A, 0x2E, 0x5B, 0x62, 0x62, 0x7B, 0x70, 0x26,
+ 0x5B, 0x19, 0x4C, 0x6B, 0x21, 0x76, 0x4C, 0x3C,
+ 0x31, 0x3E, 0x0A, 0x64, 0x46, 0x5B, 0x64, 0x72,
+ 0x5C, 0x7B, 0x75, 0x2F, 0x2F, 0x09, 0x1A, 0x29,
+ 0x3C, 0x31, 0x6E, 0x2B, 0x3E, 0x60, 0x4D, 0x41,
+ 0x31, 0x41, 0x53, 0x37, 0x51, 0x40, 0x5C, 0x1A,
+ 0x1B, 0x09, 0x05, 0x35, 0x49, 0x09, 0x29, 0x14,
+ 0x5A, 0x6A, 0x64, 0x03, 0x07, 0x1A, 0x13, 0x0F,
+ 0x4E, 0x45, 0x51, 0x03, 0x69, 0x55, 0x7A, 0x6B,
+ 0x56, 0x78, 0x2A, 0x14, 0x51, 0x19, 0x3D, 0x08,
+ 0x54, 0x64, 0x50, 0x15, 0x1D, 0x46, 0x3E, 0x46,
+ 0x27, 0x6A, 0x23, 0x68, 0x2F, 0x3C, 0x5C, 0x05,
+ 0x2F, 0x68, 0x03, 0x6B, 0x65, 0x5B, 0x76, 0x26,
+ 0x4C, 0x3F, 0x51, 0x00, 0x21, 0x03, 0x6E, 0x07,
+ 0x5E, 0x50, 0x6B, 0x06, 0x41, 0x13, 0x23, 0x09,
+ 0x45, 0x79, 0x32, 0x5C, 0x27, 0x6D, 0x75, 0x0C,
+ 0x61, 0x1B, 0x06, 0x64, 0x31, 0x70, 0x43, 0x70,
+ 0x12, 0x17, 0x48, 0x7C, 0x41, 0x7C, 0x6F, 0x15,
+ 0x38, 0x4B, 0x56, 0x06, 0x35, 0x71, 0x58, 0x5B,
+ 0x33, 0x19, 0x11, 0x61, 0x6F, 0x2F, 0x5D, 0x22,
+ 0x63, 0x5F, 0x59, 0x6C, 0x4D, 0x15, 0x60, 0x4A,
+ 0x28, 0x7E, 0x0E, 0x09, 0x30, 0x05, 0x40, 0x33,
+ 0x62, 0x57, 0x11, 0x16, 0x79, 0x5E, 0x5D, 0x3D,
+ 0x71, 0x48, 0x40, 0x75, 0x06, 0x00, 0x16, 0x49,
+ 0x35, 0x32, 0x7C, 0x04, 0x39, 0x4B, 0x4D, 0x35,
+ 0x0E, 0x76, 0x25, 0x25, 0x70, 0x1F, 0x61, 0x62,
+ 0x5C, 0x72, 0x1B, 0x37, 0x0D, 0x5B, 0x31, 0x30,
+ 0x7F, 0x07, 0x3F, 0x19, 0x6E, 0x61, 0x1F, 0x7F,
+ 0x57, 0x16, 0x6F, 0x2D, 0x75, 0x10, 0x0A, 0x2F,
+ 0x44, 0x7D, 0x0C, 0x51, 0x00, 0x48, 0x52, 0x20,
+ 0x26, 0x1D, 0x76, 0x67, 0x71, 0x69, 0x56, 0x32,
+ 0x5D, 0x57, 0x0E, 0x4E, 0x26, 0x53, 0x78, 0x45,
+ 0x49, 0x09, 0x32, 0x65, 0x01, 0x66, 0x17, 0x39,
+ 0x4A, 0x14, 0x43, 0x0E, 0x60, 0x01, 0x13, 0x6F,
+ 0x40, 0x59, 0x21, 0x27, 0x25, 0x06, 0x4B, 0x45,
+ 0x0B, 0x36, 0x2C, 0x12, 0x2E, 0x54, 0x21, 0x1C,
+ 0x0B, 0x0C, 0x45, 0x2E, 0x5D, 0x4B, 0x74, 0x54,
+ 0x20, 0x3C, 0x4A, 0x5A, 0x10, 0x4B, 0x23, 0x4D,
+ 0x2A, 0x24, 0x1C, 0x78, 0x28, 0x34, 0x10, 0x67,
+ 0x09, 0x25, 0x1B, 0x66, 0x06, 0x65, 0x1A, 0x02,
+ 0x1D, 0x20, 0x28, 0x06, 0x08, 0x40, 0x21, 0x7E,
+ 0x45, 0x73, 0x21, 0x37, 0x10, 0x24, 0x04, 0x3B,
+ 0x63, 0x7F, 0x67, 0x58};
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+	////////////////////////////////////////////////////////////////////////////////////
+	//
+	// Platform Specific Functions
+	//
+	////////////////////////////////////////////////////////////////////////////////////
+	
+	/**
+	 * Returns the number of devices connected, though does not specify device type
+	 *
+	 * @param dev Device pointer
+	 * @param VID Vendor ID, defaults to 0x0590
+	 * @param PID Product ID, defaults to 0x0028
+	 *
+	 * @return Number of devices connected, or < 0 if error
+	 */
+	THIRDSPACEVEST_DECLSPEC thirdspacevest_device* thirdspacevest_create();
+	THIRDSPACEVEST_DECLSPEC void thirdspacevest_delete(thirdspacevest_device* dev);
+
+	/**
+	 * Returns the number of devices connected, though does not specify device type
+	 *
+	 * @param dev Device pointer
+	 *
+	 * @return Number of devices connected, or < 0 if error
+	 */
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_get_count(thirdspacevest_device* dev);
+
+	/**
+	 * Returns the number of devices connected, though does not specify device type
+	 *
+	 * @param dev Device pointer
+	 * @param device_index Index of the device to open
+	 *
+	 * @return 0 if ok, otherwise < 0
+	 */
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_open(thirdspacevest_device* dev, uint32_t device_index);
+
+	/**
+	 * Closes an open thirdspacevest device
+	 *
+	 * @param dev Device pointer to close
+	 *
+	 * @return 0 if ok, otherwise < 0
+	 */
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_close(thirdspacevest_device* dev);
+
+	/**
+	 * Send an effect to the device
+	 *
+	 * @param dev Device pointer to close
+	 * @param index Index of the cell to inflate
+	 * @param speed Speed to inflate the cell at. Higher = faster?
+	 *
+	 * @return 0 if ok, otherwise < 0
+	 */
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_send_effect(thirdspacevest_device* dev, uint8_t index, uint8_t speed);
+
+	/**
+	 * Reads data from the device
+	 *
+	 * @param dev Device pointer to read from
+	 * @param input_report Buffer to read into (always 10 bytes)
+	 *
+	 * @return 0 if ok, otherwise < 0
+	 */
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_read_data(thirdspacevest_device* dev, uint8_t *input_report);
+
+	/**
+	 * Writes data to the device
+	 *
+	 * @param dev Device pointer to write to
+	 * @param input_report Buffer to read from (always 10 bytes)
+	 *
+	 * @return > 0 if ok, otherwise < 0
+	 */
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_write_data(thirdspacevest_device* dev, uint8_t *output_report);	
+
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_form_checksum(uint8_t index, uint8_t speed);
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_encipher(unsigned long* data, unsigned long* cache_key);
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_decipher(unsigned long* data, unsigned long* cache_key);
+	THIRDSPACEVEST_DECLSPEC int thirdspacevest_send_effect(thirdspacevest_device* dev, uint8_t index, uint8_t speed);
+#ifdef __cplusplus
+}
+#endif
+
+
+#endif //LIBTHIRDSPACEVEST_H
