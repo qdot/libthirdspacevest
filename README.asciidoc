@@ -35,7 +35,6 @@ https://github.com/qdot/libthirdspacevest/blob/master/doc/third_space_vest_rever
 
 == Future Plans
 
-- Win32 HID Support
 - Enumeration of effects provided in tngaming.lib
 - PD/Max Externals
 
@@ -69,10 +68,14 @@ either the C or python example and have the vest react appropriately.
 
 === Windows
 
-This will not currently work on windows because of the use of libusb,
-which doesn't interface with windows HID. The code to port this to
-windows shouldn't be difficult, and will hopefully be done in a few
-days.
+When running CMake to generate the project on windows, you'll need to
+set the WDK_PATH variable to the root of your WDK version, i.e.
+
+C:\WinDDK\7600.16385.0
+
+Also, this has only been successfully tested on VS2008. VS2010 seems
+to break in odd ways due to the stdint.h. This will hopefully be
+resolved soon.
 
 == License ==
 
