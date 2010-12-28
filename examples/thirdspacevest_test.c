@@ -35,14 +35,22 @@ int main(int argc, char** argv)
 	{
 		printf("sending to 10 to %d\n", i);
 		thirdspacevest_send_effect(test, i, 10);
+#ifdef WIN32
+		Sleep(1000);
+#else
 		sleep(1);
+#endif
 	}
 
 	for(i = 0; i < 8; ++i)
 	{
 		printf("sending to 0 to %d\n", i);
 		thirdspacevest_send_effect(test, i, 0);
+#ifdef WIN32
+		Sleep(1000);
+#else
 		sleep(1);
+#endif
 	}
 
 	ret = thirdspacevest_close(test);

@@ -44,7 +44,7 @@ TCHAR*								ValueToDisplay;
 
 void GetDeviceCapabilities(HANDLE DeviceHandle)
 {
-	//Get the Capabilities structure for the device.
+	//Get the Capabilities structure for the 
 
 	PHIDP_PREPARSED_DATA	PreparsedData;
 
@@ -64,7 +64,7 @@ void GetDeviceCapabilities(HANDLE DeviceHandle)
 	  API function: HidP_GetCaps
 	  Learn the device's capabilities.
 	  For standard devices such as joysticks, you can find out the specific
-	  capabilities of the device.
+	  capabilities of the 
 	  For a custom device, the software will probably know what the device is capable of,
 	  and the call only verifies the information.
 	  Requires: the pointer to the buffer returned by HidD_GetPreparsedData.
@@ -91,7 +91,7 @@ int thirdspacevest_open_win32(thirdspacevest_device* dev, unsigned int device_in
 
 	Length = 0;
 	detailData = NULL;
-	dev->device._dev = NULL;
+	dev->_dev = NULL;
 
 	/*
 	  API function: HidD_GetHidGuid
@@ -126,11 +126,11 @@ int thirdspacevest_open_win32(thirdspacevest_device* dev, unsigned int device_in
 		/*
 		  API function: SetupDiEnumDeviceInterfaces
 		  On return, MyDeviceInterfaceData contains the handle to a
-		  SP_DEVICE_INTERFACE_DATA structure for a detected device.
+		  SP_DEVICE_INTERFACE_DATA structure for a detected 
 		  Requires:
 		  The DeviceInfoSet returned in SetupDiGetClassDevs.
 		  The HidGuid returned in GetHidGuid.
-		  An index to specify a device.
+		  An index to specify a 
 		*/
 
 		Result=SetupDiEnumDeviceInterfaces
@@ -147,7 +147,7 @@ int thirdspacevest_open_win32(thirdspacevest_device* dev, unsigned int device_in
 			/*
 			  API function: SetupDiGetDeviceInterfaceDetail
 			  Returns: an SP_DEVICE_INTERFACE_DETAIL_DATA structure
-			  containing information about a device.
+			  containing information about a 
 			  To retrieve the information, call this function twice.
 			  The first time returns the size of the structure in Length.
 			  The second time returns a pointer to the data in DeviceInfoSet.
@@ -191,20 +191,20 @@ int thirdspacevest_open_win32(thirdspacevest_device* dev, unsigned int device_in
 				 &Required,
 				 NULL);
 
-			// Open a handle to the device.
+			// Open a handle to the 
 			// To enable retrieving information about a system mouse or keyboard,
 			// don't request Read or Write access for this handle.
 
 			/*
 			  API function: CreateFile
-			  Returns: a handle that enables reading and writing to the device.
+			  Returns: a handle that enables reading and writing to the 
 			  Requires:
 			  The DevicePath in the detailData structure
 			  returned by SetupDiGetDeviceInterfaceDetail.
 			*/
 
 			
-			dev->device._dev =CreateFile
+			dev->_dev =CreateFile
 				(detailData->DevicePath,
 				 GENERIC_READ | GENERIC_WRITE,
 				 FILE_SHARE_READ|FILE_SHARE_WRITE,
@@ -215,7 +215,7 @@ int thirdspacevest_open_win32(thirdspacevest_device* dev, unsigned int device_in
 
 			/*
 			  API function: HidD_GetAttributes
-			  Requests information from the device.
+			  Requests information from the 
 			  Requires: the handle returned by CreateFile.
 			  Returns: a HIDD_ATTRIBUTES structure containing
 			  the Vendor ID, Product ID, and Product Version Number.
@@ -228,7 +228,7 @@ int thirdspacevest_open_win32(thirdspacevest_device* dev, unsigned int device_in
 			Attributes.Size = sizeof(Attributes);
 
 			Result = HidD_GetAttributes
-				(dev->device._dev,
+				(dev->_dev,
 				 &Attributes);
 
 			//Is it the desired device?
@@ -240,19 +240,19 @@ int thirdspacevest_open_win32(thirdspacevest_device* dev, unsigned int device_in
 				if(get_count)
 				{
 					++device_count;
-					CloseHandle(dev->device._dev);
+					CloseHandle(dev->_dev);
 				}
 				else
 				{
 					MyDeviceDetected = TRUE;
 					MyDevicePathName = detailData->DevicePath;
-					GetDeviceCapabilities(dev->device._dev);
+					GetDeviceCapabilities(dev->_dev);
 					break;
 				}
 			}
 			else
 			{
-				CloseHandle(dev->device._dev);
+				CloseHandle(dev->_dev);
 			}
 			free(detailData);
 		}  //if (Result != 0)
@@ -284,7 +284,7 @@ THIRDSPACEVEST_DECLSPEC int thirdspacevest_open(thirdspacevest_device* dev, unsi
 
 THIRDSPACEVEST_DECLSPEC int thirdspacevest_close(thirdspacevest_device* dev)
 {
-	CloseHandle(dev->device._dev);
+	CloseHandle(dev->_dev);
 	return 0;
 }
 
@@ -293,7 +293,7 @@ THIRDSPACEVEST_DECLSPEC int thirdspacevest_read_data(thirdspacevest_device* dev,
 	int Result;
 	char read[64];
 	Result = ReadFile
-		(dev->device._dev,
+		(dev->_dev,
 		 read,
 		 Capabilities.InputReportByteLength,
 		 &NumberOfBytesRead,
@@ -309,7 +309,7 @@ THIRDSPACEVEST_DECLSPEC int thirdspacevest_write_data(thirdspacevest_device* dev
 	command[0] = 0x0;
 	memcpy((command+1), output_report, 10);
 	Result = WriteFile
-		(dev->device._dev,
+		(dev->_dev,
 		 command,
 		 Capabilities.OutputReportByteLength,
 		 &NumberOfBytesRead,
@@ -320,8 +320,8 @@ THIRDSPACEVEST_DECLSPEC int thirdspacevest_write_data(thirdspacevest_device* dev
 THIRDSPACEVEST_DECLSPEC thirdspacevest_device* thirdspacevest_create()
 {
 	thirdspacevest_device* s = (thirdspacevest_device*)malloc(sizeof(thirdspacevest_device));
-	s->device._is_open = 0;
-	s->device._is_inited = 1;	
+	s->_is_open = 0;
+	s->_is_inited = 1;	
 	return s;
 }
 
