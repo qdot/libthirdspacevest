@@ -1,7 +1,7 @@
 /*
- * Generic function file for Thirdspacevest Health User Space Driver - libusb version
+ * Third Space Vest Driver - libusb comms
  *
- * Copyright (c) 2009-2010 Kyle Machulis/Nonpolynomial Labs <kyle@nonpolynomial.com>
+ * Copyright (c) 2010 Kyle Machulis/Nonpolynomial Labs <kyle@nonpolynomial.com>
  *
  * More info on Nonpolynomial Labs @ http://www.nonpolynomial.com
  *

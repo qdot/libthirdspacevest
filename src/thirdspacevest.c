@@ -1,3 +1,16 @@
+/*
+ * Third Space Vest Driver - General Functions
+ *
+ * Copyright (c) 2010 Kyle Machulis/Nonpolynomial Labs <kyle@nonpolynomial.com>
+ *
+ * More info on Nonpolynomial Labs @ http://www.nonpolynomial.com
+ *
+ * Source code available at http://www.github.com/qdot/libthirdspacevest/
+ *
+ * This library is covered by the BSD License
+ * Read LICENSE_BSD.txt for details.
+ */
+
 #include "thirdspacevest/thirdspacevest.h"
 #include <stdio.h>
 
