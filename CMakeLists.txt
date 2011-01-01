@@ -110,6 +110,11 @@ FOREACH(DIR ${LIBTHIRDSPACEVEST_INCLUDE_DIRS})
   LIST(APPEND LIBTHIRDSPACEVEST_INCLUDE_FILES ${HEADER_FILES})
 ENDFOREACH(DIR ${LIBTHIRDSPACEVEST_INCLUDE_DIRS})
 
+IF(BUILD_SHARED AND WIN32)
+  ADD_DEFINITIONS(-DTHIRDSPACEVEST_DYNAMIC)
+ENDIF()
+
+
 ######################################################################################
 # Subdirectories
 ######################################################################################
