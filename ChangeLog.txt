@@ -1,0 +1,8 @@
+libthirdspacevest ChangeLog
+=====================
+Numbers refer to bug listings for libthirdspacevest bug tracking system - https://github.com/qdot/libthirdspacevest/issues
+
+2010-12-31 Kyle Machulis <kyle@nonpolynomial.com>
+	* Release v0.1.0
+	* Supports triggering 3rd Space Vest cells on linux/mac/windows
+	* Includes C and Python libraries

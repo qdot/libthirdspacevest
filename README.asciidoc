@@ -36,7 +36,6 @@ https://github.com/qdot/libthirdspacevest/blob/master/doc/third_space_vest_rever
 == Future Plans
 
 - Enumeration of effects provided in tngaming.lib
-- PD/Max Externals
 
 == Things to note
 
